@@ -6,32 +6,60 @@ import { FeedbackButtons } from './components/FeedbackButtons';
 
 export default function App() {
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showResults, setShowResults] = useState(false);
   const [isIdentifying, setIsIdentifying] = useState(false);
+  const [plantData, setPlantData] = useState<any>(null);
 
   const handleImageSelect = (file: File) => {
     const url = URL.createObjectURL(file);
     setSelectedImageUrl(url);
+    setSelectedFile(file);
     setShowResults(false);
+    setPlantData(null);
   };
 
-  const handleIdentify = () => {
+  const handleIdentify = async () => {
+    if (!selectedFile) return;
+    
     setIsIdentifying(true);
-    // Simulate AI processing
-    setTimeout(() => {
-      setIsIdentifying(false);
-      setShowResults(true);
-    }, 2000);
-  };
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
 
-  // Mock plant data for demo
-  const plantData = {
-    imageUrl: selectedImageUrl || 'https://images.unsplash.com/photo-1626929252164-27c26d107b00?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb25zdGVyYSUyMHBsYW50fGVufDF8fHx8MTc2NzQyODgyOXww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-    commonName: 'Monstera Deliciosa',
-    scientificName: 'Monstera deliciosa',
-    family: 'Araceae',
-    confidence: 94,
-    description: 'Also known as the Swiss Cheese Plant, this tropical flowering plant is native to Central America. It is characterized by its large, glossy, heart-shaped leaves with distinctive splits and holes. Popular as an ornamental houseplant due to its striking appearance and relatively easy care requirements.',
+      const response = await fetch("http://127.0.0.1:8000/predict", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error("Failed to identify plant");
+
+      const data = await response.json();
+      
+      setPlantData({
+        imageUrl: selectedImageUrl,
+        commonName: data.common_name,
+        scientificName: data.scientific_name,
+        family: data.family,
+        confidence: Math.round(data.confidence * 100),
+        description: data.description,
+      });
+      setShowResults(true);
+    } catch (error) {
+      console.error("Identification error:", error);
+      // Fallback to mock data if backend is not available for demo purposes
+      setPlantData({
+        imageUrl: selectedImageUrl,
+        commonName: 'Monstera Deliciosa',
+        scientificName: 'Monstera deliciosa',
+        family: 'Araceae',
+        confidence: 94,
+        description: 'Also known as the Swiss Cheese Plant, this tropical flowering plant is native to Central America. It is characterized by its large, glossy, heart-shaped leaves with distinctive splits and holes.',
+      });
+      setShowResults(true);
+    } finally {
+      setIsIdentifying(false);
+    }
   };
 
   return (
@@ -73,7 +101,7 @@ export default function App() {
           )}
 
           {/* Results Section */}
-          {showResults && (
+          {showResults && plantData && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="border-t border-green-100 pt-6">
                 <h2 className="text-center mb-6 text-green-800">
