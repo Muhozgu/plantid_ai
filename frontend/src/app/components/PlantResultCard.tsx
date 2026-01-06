@@ -23,7 +23,7 @@ export function PlantResultCard({
         <img
           src={imageUrl}
           alt={commonName}
-          className="w-full sm:w-32 h-32 rounded-xl object-cover shadow-md flex-shrink-0"
+          className="w-full sm:w-32 h-32 rounded-xl object-cover shadow-md shrink-0"
         />
         
         <div className="flex-1 space-y-3">

@@ -1,38 +1,67 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Leaf, Sparkles } from 'lucide-react';
 import { UploadZone } from './components/UploadZone';
 import { PlantResultCard } from './components/PlantResultCard';
 import { FeedbackButtons } from './components/FeedbackButtons';
 
+interface PlantData {
+  imageUrl: string | null;
+  commonName: string;
+  scientificName: string;
+  family: string;
+  confidence: number;
+  description: string;
+}
+
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 export default function App() {
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [showResults, setShowResults] = useState(false);
   const [isIdentifying, setIsIdentifying] = useState(false);
-  const [plantData, setPlantData] = useState<any>(null);
+  const [plantData, setPlantData] = useState<PlantData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Create object URL from file
+  const selectedImageUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
+
+  // Cleanup object URLs
+  useEffect(() => {
+    return () => {
+      if (selectedImageUrl) {
+        URL.revokeObjectURL(selectedImageUrl);
+      }
+    };
+  }, [selectedImageUrl]);
 
   const handleImageSelect = (file: File) => {
-    const url = URL.createObjectURL(file);
-    setSelectedImageUrl(url);
+    // Cleanup previous URL
+    if (selectedImageUrl) {
+      URL.revokeObjectURL(selectedImageUrl);
+    }
+    
     setSelectedFile(file);
-    setShowResults(false);
     setPlantData(null);
+    setError(null);
   };
 
   const handleIdentify = async () => {
     if (!selectedFile) return;
     
     setIsIdentifying(true);
+    setError(null);
+    
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      const response = await fetch("http://127.0.0.1:8000/predict", {
+      const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         body: formData,
       });
 
-      if (!response.ok) throw new Error("Failed to identify plant");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
       const data = await response.json();
       
@@ -44,19 +73,10 @@ export default function App() {
         confidence: Math.round(data.confidence * 100),
         description: data.description,
       });
-      setShowResults(true);
     } catch (error) {
       console.error("Identification error:", error);
-      // Fallback to mock data if backend is not available for demo purposes
-      setPlantData({
-        imageUrl: selectedImageUrl,
-        commonName: 'Monstera Deliciosa',
-        scientificName: 'Monstera deliciosa',
-        family: 'Araceae',
-        confidence: 94,
-        description: 'Also known as the Swiss Cheese Plant, this tropical flowering plant is native to Central America. It is characterized by its large, glossy, heart-shaped leaves with distinctive splits and holes.',
-      });
-      setShowResults(true);
+      setError("Failed to identify plant. Please try again.");
+      setPlantData(null);
     } finally {
       setIsIdentifying(false);
     }
@@ -86,8 +106,15 @@ export default function App() {
             selectedImage={selectedImageUrl}
           />
 
+          {/* Error Message */}
+          {error && (
+            <div className="text-center p-4 bg-red-50 text-red-700 rounded-lg">
+              {error}
+            </div>
+          )}
+
           {/* Identify Button */}
-          {selectedImageUrl && (
+          {selectedFile && !plantData && (
             <div className="text-center">
               <button
                 onClick={handleIdentify}
@@ -101,13 +128,13 @@ export default function App() {
           )}
 
           {/* Results Section */}
-          {showResults && plantData && (
+          {plantData && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               <div className="border-t border-green-100 pt-6">
                 <h2 className="text-center mb-6 text-green-800">
                   Identification Result
                 </h2>
-                <PlantResultCard {...plantData} />
+                <PlantResultCard {...plantData} imageUrl={plantData.imageUrl || ''} />
               </div>
 
               {/* Feedback Section */}
