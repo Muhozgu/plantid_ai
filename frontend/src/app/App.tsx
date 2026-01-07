@@ -22,7 +22,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   // Create object URL from file
-  const selectedImageUrl = selectedFile ? URL.createObjectURL(selectedFile) : null;
+const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
 
   // Cleanup object URLs
   useEffect(() => {
@@ -34,15 +34,19 @@ export default function App() {
   }, [selectedImageUrl]);
 
   const handleImageSelect = (file: File) => {
-    // Cleanup previous URL
-    if (selectedImageUrl) {
-      URL.revokeObjectURL(selectedImageUrl);
-    }
-    
-    setSelectedFile(file);
-    setPlantData(null);
-    setError(null);
-  };
+  // Revoke old URL
+  if (selectedImageUrl) {
+    URL.revokeObjectURL(selectedImageUrl);
+  }
+
+  const imageUrl = URL.createObjectURL(file);
+
+  setSelectedFile(file);
+  setSelectedImageUrl(imageUrl);
+  setPlantData(null);
+  setError(null);
+};
+
 
   const handleIdentify = async () => {
     if (!selectedFile) return;
