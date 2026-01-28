@@ -5,6 +5,14 @@ Developed an AI web app to predict plant species based on image features. Using 
 
 Improvement: 
 
-+++ Model integration
-+++ Deployment 
+<table>
+  <tr>
+    <th>Backend</th>
+    <th>-- pretrained model ++ use of the IDE for model training.</tr>
+  </tr>
+  <tr>
+    <th>Front</th>
+    <th>++ Improvement of the user interface</th>
+  </tr>
+</table>
 
