@@ -8,11 +8,11 @@ Improvement:
 <table>
   <tr>
     <th>Backend</th>
-    <th>-- pretrained model ++ use of the IDE for model training.</tr>
+    <th>Model deployment</tr>
   </tr>
   <tr>
-    <th>Front</th>
-    <th>++ Improvement of the user interface</th>
+    <th>Frontend</th>
+    <th>Deployment</th>
   </tr>
 </table>
 
