@@ -1,0 +1,16 @@
+# Core framework
+fastapi>=0.111.0,<1.0
+uvicorn[standard]>=0.29.0,<1.0        # Uvloop + httptools for max throughput
+
+# Groq SDK (async support built-in)
+groq>=0.9.0,<1.0
+
+# Settings & validation
+pydantic>=2.7.0,<3.0
+pydantic-settings>=2.3.0,<3.0
+
+# Multipart form handling (file uploads)
+python-multipart>=0.0.9,<1.0
+
+# Env-file loading (dev convenience)
+python-dotenv>=1.0.0,<2.0
