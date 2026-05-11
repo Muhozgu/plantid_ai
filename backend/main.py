@@ -285,3 +285,6 @@ async def chat_clear(session_id: str):
 @app.get("/health", summary="Health check")
 async def health():
     return {"status": "ok", "model": MODEL}
+
+# ── Root endpoint ─────────────────────────────────────────────────────────────
+#Initial backend
