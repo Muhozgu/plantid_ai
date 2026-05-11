@@ -101,8 +101,6 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 ## 📖 Usage
 
-Example:
-
 1. Sign up or log in
 2. Create navigate to the loggin page
 3. Upload an plant image that you would like to identifier
@@ -165,10 +163,8 @@ npm test
 
 ## 🔮 Future Improvements
 
-- Add mobile support
-- Improve performance
-- Add AI recommendations
-- Multi-language support
+- Add mobile app
+
 
 ---
 
