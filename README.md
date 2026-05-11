@@ -74,7 +74,7 @@ Go to the project folder:
 cd chlorobiota/backend
 ```
 ```bash
-cd chlorobiota/forntend
+cd chlorobiota/frontend
 ```
 
 Install dependencies:
