@@ -164,6 +164,8 @@ npm test
 ## 🔮 Future Improvements
 
 - Add mobile app
+- Add a RAG for 200+ pages book
+- Add Online Learning features
 
 
 ---
@@ -190,8 +192,8 @@ This project is licensed under the MIT License.
 
 Your Name
 
-- GitHub: https://github.com/yourusername
-- LinkedIn: https://linkedin.com/in/yourprofile
+- GitHub: https://github.com/Muhozgu
+- LinkedIn: https://linkedin.com/in/muhozgu
 
 ---
 
