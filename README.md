@@ -55,6 +55,9 @@ Built to support researchers with fast classification, structured data outputs, 
 ### Dashboard
 <img width="1062" height="825" alt="image" src="https://github.com/user-attachments/assets/3d115682-3083-43db-af8b-e3e9354e4e7e" />
 
+### Main Page
+<img width="1071" height="813" alt="image" src="https://github.com/user-attachments/assets/a937b77d-2c05-4feb-8db4-953481ac812a" />
+
 ---
 
 ## 🚀 Installation
