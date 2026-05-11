@@ -193,6 +193,10 @@ If you cannot identify a plant in the image, use "Unknown Plant" for the names a
       // 3. Parse JSON — strip any accidental markdown fences
       const cleaned = rawAnswer.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
+      await apiSendMessage(
+        sid,
+        "Great! From now on, answer all questions in plain conversational text. No JSON, no code blocks."
+      );
 
       setPlantInfo({
         commonName: parsed.commonName || 'Unknown Plant',
