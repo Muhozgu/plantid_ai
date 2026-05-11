@@ -8,6 +8,8 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import { Upload, Send, Sparkles, Info, ChevronRight, CheckCircle2, Zap, ArrowLeft } from 'lucide-react';
 import { ChlorobiotoaLogo } from '../components/ChlorobiotoaLogo';
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 interface PlantInfo {
   commonName: string;
   scientificName: string;
@@ -20,42 +22,97 @@ interface ChatMessage {
   timestamp?: Date;
 }
 
+// ── API helpers ───────────────────────────────────────────────────────────────
+
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+async function apiStartSession(file: File): Promise<string> {
+  const form = new FormData();
+  form.append('image', file);
+
+  const res = await fetch(`${BASE_URL}/chat/start`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Server error ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data.session_id as string;
+}
+
+async function apiSendMessage(sessionId: string, question: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}/chat/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, question }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Server error ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data.answer as string;
+}
+
+async function apiClearSession(sessionId: string): Promise<void> {
+  await fetch(`${BASE_URL}/chat/clear/${sessionId}`, { method: 'DELETE' });
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function PlantIdentifier() {
   const navigate = useNavigate();
+
+  // Image & session
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Plant data
   const [plantInfo, setPlantInfo] = useState<PlantInfo | null>(null);
+
+  // Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
+
+  // UI states
   const [isIdentifying, setIsIdentifying] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Mouse parallax for logo
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
-
   const logoRotate = useTransform(mouseX, [-300, 300], [-5, 5]);
   const logoScale = useTransform(mouseY, [-300, 300], [0.95, 1.05]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      const centerX = window.innerWidth / 2;
-      const centerY = window.innerHeight / 2;
-      mouseX.set(e.clientX - centerX);
-      mouseY.set(e.clientY - centerY);
+      mouseX.set(e.clientX - window.innerWidth / 2);
+      mouseY.set(e.clientY - window.innerHeight / 2);
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, [mouseX, mouseY]);
 
+  // Auto-scroll chat
   useEffect(() => {
     if (chatMessages.length > 0) {
       scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [chatMessages, isTyping]);
+
+  // ── Drag handlers ──────────────────────────────────────────────────────────
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -78,142 +135,189 @@ export function PlantIdentifier() {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
     const file = e.dataTransfer.files[0];
     if (file && file.type.startsWith('image/')) {
       processImage(file);
     }
   };
 
-  const processImage = (file: File) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setUploadedImage(reader.result as string);
-      identifyPlant();
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      processImage(file);
-    }
+    if (file) processImage(file);
   };
 
-  const identifyPlant = () => {
+  // ── Core: process image ────────────────────────────────────────────────────
+
+  const processImage = async (file: File) => {
+    // Show local preview immediately — no waiting for the API
+    const reader = new FileReader();
+    reader.onloadend = () => setUploadedImage(reader.result as string);
+    reader.readAsDataURL(file);
+
+    await identifyPlant(file);
+  };
+
+  // ── Core: identify plant via FastAPI → Groq ────────────────────────────────
+
+  const identifyPlant = async (file: File) => {
     setIsIdentifying(true);
     setChatMessages([]);
     setPlantInfo(null);
     setShowSuccess(false);
+    setError(null);
 
-    setTimeout(() => {
-      const mockPlant = {
-        commonName: 'Monstera Deliciosa',
-        scientificName: 'Monstera deliciosa',
-        familyName: 'Araceae'
-      };
-      setPlantInfo(mockPlant);
+    // Clean up previous session if one exists
+    if (sessionId) {
+      await apiClearSession(sessionId).catch(() => {});
+      setSessionId(null);
+    }
+
+    try {
+      // 1. Upload image → get session ID
+      const sid = await apiStartSession(file);
+      setSessionId(sid);
+
+      // 2. Ask the model to identify the plant in structured JSON
+      const identifyPrompt = `You are a botanist AI. Identify the plant in this image.
+Respond ONLY with a valid JSON object in this exact format, no markdown, no extra text:
+{
+  "commonName": "Common name of the plant",
+  "scientificName": "Scientific name in italics format",
+  "familyName": "Plant family name",
+  "greeting": "One friendly sentence identifying the plant and inviting the user to ask questions about it"
+}
+If you cannot identify a plant in the image, use "Unknown Plant" for the names and explain in the greeting.`;
+
+      const rawAnswer = await apiSendMessage(sid, identifyPrompt);
+
+      // 3. Parse JSON — strip any accidental markdown fences
+      const cleaned = rawAnswer.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      setPlantInfo({
+        commonName: parsed.commonName || 'Unknown Plant',
+        scientificName: parsed.scientificName || '—',
+        familyName: parsed.familyName || '—',
+      });
+
       setShowSuccess(true);
-
       setTimeout(() => setShowSuccess(false), 3000);
 
-      setTimeout(() => {
-        setChatMessages([{
+      setChatMessages([
+        {
           role: 'assistant',
-          content: `Great! I've identified your plant as a ${mockPlant.commonName}. This beautiful tropical plant is perfect for indoor growing. What would you like to know about it?`,
-          timestamp: new Date()
-        }]);
-      }, 500);
-
+          content: parsed.greeting || `I've identified your plant! What would you like to know about it?`,
+          timestamp: new Date(),
+        },
+      ]);
+    } catch (err: any) {
+      const msg = err.message || 'An unexpected error occurred.';
+      setError(msg);
+      setChatMessages([
+        {
+          role: 'assistant',
+          content: `Sorry, I couldn't identify this plant. ${msg} Please try uploading a clearer image.`,
+          timestamp: new Date(),
+        },
+      ]);
+    } finally {
       setIsIdentifying(false);
-    }, 2000);
+    }
   };
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim() || !plantInfo) return;
+  // ── Core: send follow-up message ───────────────────────────────────────────
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || !plantInfo || !sessionId || isTyping) return;
 
     const userMessage: ChatMessage = {
       role: 'user',
-      content: inputMessage,
-      timestamp: new Date()
+      content: inputMessage.trim(),
+      timestamp: new Date(),
     };
 
     setChatMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      const responses = [
-        `The ${plantInfo.commonName} thrives in bright, indirect light. It can tolerate lower light conditions but grows more slowly. Direct sunlight can scorch its beautiful leaves.`,
-        `Water your ${plantInfo.commonName} when the top 2-3 inches of soil are dry. Typically this means watering once every 1-2 weeks, but always check the soil moisture first.`,
-        `The ${plantInfo.commonName} is native to the tropical rainforests of Central America, where it grows as an understory plant, climbing up trees with its aerial roots.`,
-        `Yes, the ${plantInfo.commonName} is toxic to pets and humans if ingested. Keep it out of reach of curious cats, dogs, and children.`,
-        `To propagate your ${plantInfo.commonName}, take a stem cutting with at least one node and aerial root. Place it in water or directly in moist soil. New roots will develop in 2-4 weeks.`
-      ];
-
-      const response: ChatMessage = {
-        role: 'assistant',
-        content: responses[Math.floor(Math.random() * responses.length)],
-        timestamp: new Date()
-      };
-      setChatMessages(prev => [...prev, response]);
+    try {
+      const answer = await apiSendMessage(sessionId, inputMessage.trim());
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: answer, timestamp: new Date() },
+      ]);
+    } catch (err: any) {
+      setChatMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `Sorry, something went wrong: ${err.message}`,
+          timestamp: new Date(),
+        },
+      ]);
+    } finally {
       setIsTyping(false);
-    }, 1200);
+    }
+  };
+
+  // ── Reset everything ───────────────────────────────────────────────────────
+
+  const handleReset = async () => {
+    if (sessionId) {
+      await apiClearSession(sessionId).catch(() => {});
+    }
+    setSessionId(null);
+    setUploadedImage(null);
+    setPlantInfo(null);
+    setChatMessages([]);
+    setInputMessage('');
+    setError(null);
+    setShowSuccess(false);
+    // Reset file input so the same file can be re-uploaded
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const suggestedQuestions = [
     'What are the ideal growing conditions?',
     'How often should I water it?',
     'Is this plant toxic to pets?',
-    'How do I propagate it?'
+    'How do I propagate it?',
   ];
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="size-full bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 relative overflow-hidden">
-      {/* Animated background elements */}
+
+      {/* Animated background blobs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <motion.div
           className="absolute top-20 left-20 w-64 h-64 bg-green-200/20 rounded-full blur-3xl"
-          animate={{
-            scale: [1, 1.2, 1],
-            opacity: [0.3, 0.5, 0.3],
-          }}
-          transition={{
-            duration: 8,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.5, 0.3] }}
+          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
         />
         <motion.div
           className="absolute bottom-20 right-20 w-96 h-96 bg-emerald-300/20 rounded-full blur-3xl"
-          animate={{
-            scale: [1.2, 1, 1.2],
-            opacity: [0.5, 0.3, 0.5],
-          }}
-          transition={{
-            duration: 10,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
+          animate={{ scale: [1.2, 1, 1.2], opacity: [0.5, 0.3, 0.5] }}
+          transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
         />
       </div>
 
-      {/* Success notification */}
+      {/* Success toast */}
       <AnimatePresence>
         {showSuccess && (
           <motion.div
             initial={{ opacity: 0, y: -100, scale: 0.8 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -100, scale: 0.8 }}
-            transition={{ type: "spring", damping: 20, stiffness: 300 }}
+            transition={{ type: 'spring', damping: 20, stiffness: 300 }}
             className="fixed top-6 right-6 z-50 bg-white shadow-2xl rounded-2xl p-4 border border-green-200"
           >
             <div className="flex items-center gap-3">
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1, rotate: 360 }}
-                transition={{ delay: 0.2, type: "spring", damping: 15 }}
+                transition={{ delay: 0.2, type: 'spring', damping: 15 }}
               >
                 <CheckCircle2 className="w-6 h-6 text-green-600" />
               </motion.div>
@@ -227,11 +331,12 @@ export function PlantIdentifier() {
       </AnimatePresence>
 
       <div className="size-full flex flex-col relative z-10">
-        {/* Header */}
+
+        {/* ── Header ── */}
         <motion.header
           initial={{ y: -100 }}
           animate={{ y: 0 }}
-          transition={{ type: "spring", damping: 20, stiffness: 200 }}
+          transition={{ type: 'spring', damping: 20, stiffness: 200 }}
           className="bg-white/80 backdrop-blur-md border-b border-green-100 sticky top-0 z-20 shadow-sm"
         >
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -247,12 +352,12 @@ export function PlantIdentifier() {
               <motion.div
                 className="flex items-center gap-3"
                 whileHover={{ scale: 1.02 }}
-                transition={{ type: "spring", stiffness: 400 }}
+                transition={{ type: 'spring', stiffness: 400 }}
               >
                 <motion.div
                   style={{ rotate: logoRotate, scale: logoScale }}
                   whileHover={{ rotate: 0, scale: 1.1 }}
-                  transition={{ type: "spring", stiffness: 300 }}
+                  transition={{ type: 'spring', stiffness: 300 }}
                 >
                   <ChlorobiotoaLogo className="w-10 h-10" />
                 </motion.div>
@@ -276,19 +381,19 @@ export function PlantIdentifier() {
           </div>
         </motion.header>
 
-        {/* Main Content */}
+        {/* ── Main ── */}
         <div className="flex-1 overflow-hidden">
           <div className="max-w-7xl mx-auto h-full p-6">
             <div className="h-full grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-              {/* Left Panel - Upload & Results */}
+              {/* ── Left Panel ── */}
               <div className="lg:col-span-2 flex flex-col gap-6 overflow-auto">
 
-                {/* Upload Card */}
+                {/* Upload card */}
                 <motion.div
                   initial={{ opacity: 0, x: -50 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.1, type: "spring", damping: 20 }}
+                  transition={{ delay: 0.1, type: 'spring', damping: 20 }}
                 >
                   <Card className="overflow-hidden shadow-lg border-0 bg-white/90 backdrop-blur">
                     <div className="p-6">
@@ -299,10 +404,7 @@ export function PlantIdentifier() {
                         transition={{ delay: 0.2 }}
                       >
                         <h2 className="font-semibold text-gray-800">Upload Image</h2>
-                        <motion.div
-                          whileHover={{ rotate: 180 }}
-                          transition={{ duration: 0.3 }}
-                        >
+                        <motion.div whileHover={{ rotate: 180 }} transition={{ duration: 0.3 }}>
                           <Info className="w-4 h-4 text-gray-400" />
                         </motion.div>
                       </motion.div>
@@ -328,7 +430,7 @@ export function PlantIdentifier() {
                             }
                           `}
                           animate={{
-                            borderColor: isDragging ? '#10b981' : uploadedImage ? '#86efac' : '#d1d5db'
+                            borderColor: isDragging ? '#10b981' : uploadedImage ? '#86efac' : '#d1d5db',
                           }}
                         >
                           {uploadedImage ? (
@@ -336,7 +438,7 @@ export function PlantIdentifier() {
                               className="relative"
                               initial={{ opacity: 0, scale: 0.8 }}
                               animate={{ opacity: 1, scale: 1 }}
-                              transition={{ type: "spring", damping: 15 }}
+                              transition={{ type: 'spring', damping: 15 }}
                             >
                               <img
                                 src={uploadedImage}
@@ -352,7 +454,7 @@ export function PlantIdentifier() {
                                   className="bg-white/90 backdrop-blur rounded-full p-3"
                                   initial={{ scale: 0 }}
                                   whileHover={{ scale: 1 }}
-                                  transition={{ type: "spring", stiffness: 400 }}
+                                  transition={{ type: 'spring', stiffness: 400 }}
                                 >
                                   <Upload className="w-5 h-5 text-green-600" />
                                 </motion.div>
@@ -362,11 +464,8 @@ export function PlantIdentifier() {
                             <div className="p-12 flex flex-col items-center gap-4">
                               <motion.div
                                 className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center"
-                                animate={{
-                                  y: isDragging ? -10 : 0,
-                                  scale: isDragging ? 1.1 : 1
-                                }}
-                                transition={{ type: "spring", stiffness: 300 }}
+                                animate={{ y: isDragging ? -10 : 0, scale: isDragging ? 1.1 : 1 }}
+                                transition={{ type: 'spring', stiffness: 300 }}
                               >
                                 <Upload className="w-8 h-8 text-green-600" />
                               </motion.div>
@@ -379,6 +478,7 @@ export function PlantIdentifier() {
                           )}
                         </motion.div>
                       </motion.div>
+
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -386,30 +486,49 @@ export function PlantIdentifier() {
                         onChange={handleImageUpload}
                         className="hidden"
                       />
+
+                      {/* Reset link — only shown after upload */}
+                      <AnimatePresence>
+                        {uploadedImage && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-3 text-center"
+                          >
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReset(); }}
+                              className="text-sm text-gray-400 hover:text-green-600 transition-colors"
+                            >
+                              ↩ Upload a different image
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   </Card>
                 </motion.div>
 
-                {/* Results Card */}
+                {/* Results card */}
                 <AnimatePresence mode="wait">
                   {(plantInfo || isIdentifying) && (
                     <motion.div
                       initial={{ opacity: 0, y: 50, scale: 0.9 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -50, scale: 0.9 }}
-                      transition={{ type: "spring", damping: 20, stiffness: 200 }}
+                      transition={{ type: 'spring', damping: 20, stiffness: 200 }}
                     >
                       <Card className="shadow-lg border-0 bg-white/90 backdrop-blur overflow-hidden">
                         <motion.div
                           className="bg-gradient-to-r from-green-600 to-emerald-600 p-6 text-white"
                           initial={{ x: -100 }}
                           animate={{ x: 0 }}
-                          transition={{ type: "spring", damping: 20 }}
+                          transition={{ type: 'spring', damping: 20 }}
                         >
                           <h2 className="font-semibold flex items-center gap-2">
                             <motion.div
                               animate={{ rotate: 360 }}
-                              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                              transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
                             >
                               <Sparkles className="w-5 h-5" />
                             </motion.div>
@@ -432,65 +551,35 @@ export function PlantIdentifier() {
                               <motion.div
                                 className="absolute inset-0 w-16 h-16 rounded-full border-4 border-transparent border-t-green-600"
                                 animate={{ rotate: 360 }}
-                                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                               />
                             </div>
-                            <motion.div
-                              className="text-center"
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.2 }}
-                            >
+                            <div className="text-center">
                               <p className="font-medium text-gray-700">Analyzing your plant...</p>
                               <p className="text-sm text-gray-500 mt-1">Using advanced AI recognition</p>
-                            </motion.div>
+                            </div>
                           </motion.div>
                         ) : plantInfo && (
                           <div className="p-6 space-y-4">
-                            <motion.div
-                              className="group hover:bg-green-50/50 p-4 rounded-xl transition-colors cursor-pointer"
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.2 }}
-                              whileHover={{ x: 5 }}
-                            >
-                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                                Common Name
-                              </p>
-                              <p className="text-xl font-bold text-gray-900">
-                                {plantInfo.commonName}
-                              </p>
-                            </motion.div>
-
-                            <motion.div
-                              className="group hover:bg-green-50/50 p-4 rounded-xl transition-colors cursor-pointer"
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.3 }}
-                              whileHover={{ x: 5 }}
-                            >
-                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                                Scientific Name
-                              </p>
-                              <p className="text-lg italic text-gray-700 font-medium">
-                                {plantInfo.scientificName}
-                              </p>
-                            </motion.div>
-
-                            <motion.div
-                              className="group hover:bg-green-50/50 p-4 rounded-xl transition-colors cursor-pointer"
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.4 }}
-                              whileHover={{ x: 5 }}
-                            >
-                              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-                                Family
-                              </p>
-                              <p className="text-lg text-gray-700 font-medium">
-                                {plantInfo.familyName}
-                              </p>
-                            </motion.div>
+                            {[
+                              { label: 'Common Name', value: plantInfo.commonName, style: 'text-xl font-bold text-gray-900' },
+                              { label: 'Scientific Name', value: plantInfo.scientificName, style: 'text-lg italic text-gray-700 font-medium' },
+                              { label: 'Family', value: plantInfo.familyName, style: 'text-lg text-gray-700 font-medium' },
+                            ].map((item, i) => (
+                              <motion.div
+                                key={item.label}
+                                className="group hover:bg-green-50/50 p-4 rounded-xl transition-colors cursor-pointer"
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.2 + i * 0.1 }}
+                                whileHover={{ x: 5 }}
+                              >
+                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                                  {item.label}
+                                </p>
+                                <p className={item.style}>{item.value}</p>
+                              </motion.div>
+                            ))}
                           </div>
                         )}
                       </Card>
@@ -499,19 +588,21 @@ export function PlantIdentifier() {
                 </AnimatePresence>
               </div>
 
-              {/* Right Panel - Chat */}
+              {/* ── Right Panel: Chat ── */}
               <motion.div
                 className="lg:col-span-3 flex flex-col min-h-0"
                 initial={{ opacity: 0, x: 50 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2, type: "spring", damping: 20 }}
+                transition={{ delay: 0.2, type: 'spring', damping: 20 }}
               >
                 <Card className="shadow-lg border-0 bg-white/90 backdrop-blur flex flex-col overflow-hidden flex-1 min-h-0">
+
+                  {/* Chat header */}
                   <motion.div
                     className="bg-gradient-to-r from-green-600 to-emerald-600 p-6 text-white flex-shrink-0"
                     initial={{ y: -50 }}
                     animate={{ y: 0 }}
-                    transition={{ type: "spring", damping: 15 }}
+                    transition={{ type: 'spring', damping: 15 }}
                   >
                     <h2 className="font-semibold flex items-center gap-2">
                       <Zap className="w-5 h-5" />
@@ -522,193 +613,185 @@ export function PlantIdentifier() {
                     </p>
                   </motion.div>
 
+                  {/* Messages */}
                   <ScrollArea className="flex-1 min-h-0">
                     <div className="p-6">
-                    {chatMessages.length === 0 && !plantInfo ? (
-                      <motion.div
-                        className="h-full flex flex-col items-center justify-center text-center p-12"
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: 0.4 }}
-                      >
+                      {chatMessages.length === 0 && !plantInfo ? (
                         <motion.div
-                          className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mb-6"
-                          animate={{
-                            scale: [1, 1.05, 1],
-                            rotate: [0, 5, -5, 0]
-                          }}
-                          transition={{
-                            duration: 4,
-                            repeat: Infinity,
-                            ease: "easeInOut"
-                          }}
+                          className="h-full flex flex-col items-center justify-center text-center p-12"
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.4 }}
                         >
-                          <ChlorobiotoaLogo className="w-12 h-12" />
-                        </motion.div>
-                        <motion.h3
-                          className="text-xl font-semibold text-gray-700 mb-2"
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.5 }}
-                        >
-                          Welcome to Chlorobiota
-                        </motion.h3>
-                        <motion.p
-                          className="text-gray-500 max-w-md"
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.6 }}
-                        >
-                          Upload a plant image to get started. I'll identify it and answer all your questions about care, growth, and more.
-                        </motion.p>
-                      </motion.div>
-                    ) : (
-                      <div className="space-y-6">
-                        <AnimatePresence mode="popLayout">
-                          {chatMessages.map((message, index) => (
-                            <motion.div
-                              key={index}
-                              initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                              animate={{ opacity: 1, y: 0, scale: 1 }}
-                              exit={{ opacity: 0, scale: 0.95 }}
-                              transition={{
-                                type: "spring",
-                                damping: 25,
-                                stiffness: 300,
-                                delay: index * 0.05
-                              }}
-                              className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                            >
-                              {message.role === 'assistant' && (
-                                <motion.div
-                                  className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0"
-                                  initial={{ scale: 0, rotate: -180 }}
-                                  animate={{ scale: 1, rotate: 0 }}
-                                  transition={{ type: "spring", delay: index * 0.05 + 0.1 }}
-                                >
-                                  <ChlorobiotoaLogo className="w-5 h-5" />
-                                </motion.div>
-                              )}
-                              <motion.div
-                                className={`max-w-[75%] rounded-2xl px-5 py-3 ${
-                                  message.role === 'user'
-                                    ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
-                                    : 'bg-gray-100 text-gray-800 shadow-sm'
-                                }`}
-                                whileHover={{ scale: 1.02 }}
-                                transition={{ type: "spring", stiffness: 400 }}
-                              >
-                                <p className="leading-relaxed">{message.content}</p>
-                              </motion.div>
-                            </motion.div>
-                          ))}
-                        </AnimatePresence>
-
-                        {isTyping && (
                           <motion.div
-                            className="flex gap-3 items-start"
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0 }}
+                            className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mb-6"
+                            animate={{ scale: [1, 1.05, 1], rotate: [0, 5, -5, 0] }}
+                            transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
                           >
-                            <motion.div
-                              className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center"
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              transition={{ type: "spring" }}
-                            >
-                              <ChlorobiotoaLogo className="w-5 h-5" />
-                            </motion.div>
-                            <div className="bg-gray-100 rounded-2xl px-5 py-3">
-                              <div className="flex gap-1">
-                                {[0, 1, 2].map((i) => (
-                                  <motion.div
-                                    key={i}
-                                    className="w-2 h-2 bg-gray-400 rounded-full"
-                                    animate={{ y: [0, -8, 0] }}
-                                    transition={{
-                                      duration: 0.6,
-                                      repeat: Infinity,
-                                      delay: i * 0.15
-                                    }}
-                                  />
-                                ))}
-                              </div>
-                            </div>
+                            <ChlorobiotoaLogo className="w-12 h-12" />
                           </motion.div>
-                        )}
-
-                        {chatMessages.length > 0 && chatMessages.length < 3 && !isTyping && (
-                          <motion.div
-                            className="pt-4"
-                            initial={{ opacity: 0, y: 20 }}
+                          <motion.h3
+                            className="text-xl font-semibold text-gray-700 mb-2"
+                            initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.5 }}
                           >
-                            <p className="text-xs text-gray-500 mb-3 font-medium">Suggested questions:</p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {suggestedQuestions.map((question, idx) => (
-                                <motion.button
-                                  key={idx}
-                                  onClick={() => setInputMessage(question)}
-                                  className="text-left text-sm px-4 py-3 rounded-xl bg-green-50 hover:bg-green-100 text-gray-700 transition-colors border border-green-100 hover:border-green-200 flex items-center justify-between group"
-                                  initial={{ opacity: 0, x: -20 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: 0.6 + idx * 0.1 }}
-                                  whileHover={{ scale: 1.02, x: 5 }}
-                                  whileTap={{ scale: 0.98 }}
-                                >
-                                  <span>{question}</span>
+                            Welcome to Chlorobiota
+                          </motion.h3>
+                          <motion.p
+                            className="text-gray-500 max-w-md"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.6 }}
+                          >
+                            Upload a plant image to get started. I'll identify it and answer
+                            all your questions about care, growth, and more.
+                          </motion.p>
+                        </motion.div>
+                      ) : (
+                        <div className="space-y-6">
+                          <AnimatePresence mode="popLayout">
+                            {chatMessages.map((message, index) => (
+                              <motion.div
+                                key={index}
+                                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                transition={{
+                                  type: 'spring',
+                                  damping: 25,
+                                  stiffness: 300,
+                                  delay: index * 0.05,
+                                }}
+                                className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                              >
+                                {message.role === 'assistant' && (
                                   <motion.div
-                                    initial={{ x: -5, opacity: 0 }}
-                                    whileHover={{ x: 0, opacity: 1 }}
+                                    className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0"
+                                    initial={{ scale: 0, rotate: -180 }}
+                                    animate={{ scale: 1, rotate: 0 }}
+                                    transition={{ type: 'spring', delay: index * 0.05 + 0.1 }}
                                   >
-                                    <ChevronRight className="w-4 h-4 text-green-600" />
+                                    <ChlorobiotoaLogo className="w-5 h-5" />
                                   </motion.div>
-                                </motion.button>
-                              ))}
-                            </div>
-                          </motion.div>
-                        )}
-                        <div ref={scrollRef} />
-                      </div>
-                    )}
+                                )}
+                                <motion.div
+                                  className={`max-w-[75%] rounded-2xl px-5 py-3 ${
+                                    message.role === 'user'
+                                      ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-md'
+                                      : 'bg-gray-100 text-gray-800 shadow-sm'
+                                  }`}
+                                  whileHover={{ scale: 1.02 }}
+                                  transition={{ type: 'spring', stiffness: 400 }}
+                                >
+                                  <p className="leading-relaxed">{message.content}</p>
+                                </motion.div>
+                              </motion.div>
+                            ))}
+                          </AnimatePresence>
+
+                          {/* Typing indicator */}
+                          <AnimatePresence>
+                            {isTyping && (
+                              <motion.div
+                                className="flex gap-3 items-start"
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0 }}
+                              >
+                                <motion.div
+                                  className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center"
+                                  initial={{ scale: 0 }}
+                                  animate={{ scale: 1 }}
+                                  transition={{ type: 'spring' }}
+                                >
+                                  <ChlorobiotoaLogo className="w-5 h-5" />
+                                </motion.div>
+                                <div className="bg-gray-100 rounded-2xl px-5 py-3">
+                                  <div className="flex gap-1">
+                                    {[0, 1, 2].map((i) => (
+                                      <motion.div
+                                        key={i}
+                                        className="w-2 h-2 bg-gray-400 rounded-full"
+                                        animate={{ y: [0, -8, 0] }}
+                                        transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+
+                          {/* Suggested questions */}
+                          {chatMessages.length > 0 && chatMessages.length < 3 && !isTyping && (
+                            <motion.div
+                              className="pt-4"
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.5 }}
+                            >
+                              <p className="text-xs text-gray-500 mb-3 font-medium">Suggested questions:</p>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {suggestedQuestions.map((question, idx) => (
+                                  <motion.button
+                                    key={idx}
+                                    onClick={() => setInputMessage(question)}
+                                    className="text-left text-sm px-4 py-3 rounded-xl bg-green-50 hover:bg-green-100 text-gray-700 transition-colors border border-green-100 hover:border-green-200 flex items-center justify-between group"
+                                    initial={{ opacity: 0, x: -20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.6 + idx * 0.1 }}
+                                    whileHover={{ scale: 1.02, x: 5 }}
+                                    whileTap={{ scale: 0.98 }}
+                                  >
+                                    <span>{question}</span>
+                                    <motion.div
+                                      initial={{ x: -5, opacity: 0 }}
+                                      whileHover={{ x: 0, opacity: 1 }}
+                                    >
+                                      <ChevronRight className="w-4 h-4 text-green-600" />
+                                    </motion.div>
+                                  </motion.button>
+                                ))}
+                              </div>
+                            </motion.div>
+                          )}
+
+                          <div ref={scrollRef} />
+                        </div>
+                      )}
                     </div>
                   </ScrollArea>
 
+                  {/* Input bar */}
                   <motion.div
                     className="p-6 border-t border-gray-100 bg-gray-50/50 flex-shrink-0"
                     initial={{ y: 50 }}
                     animate={{ y: 0 }}
-                    transition={{ type: "spring", damping: 20 }}
+                    transition={{ type: 'spring', damping: 20 }}
                   >
                     <div className="flex gap-3">
-                      <motion.div
-                        className="flex-1"
-                        whileFocus={{ scale: 1.01 }}
-                      >
+                      <motion.div className="flex-1" whileFocus={{ scale: 1.01 }}>
                         <Input
                           value={inputMessage}
                           onChange={(e) => setInputMessage(e.target.value)}
                           onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                          placeholder={plantInfo ? "Ask about care, habitat, toxicity..." : "Upload an image to start chatting"}
+                          placeholder={
+                            plantInfo
+                              ? 'Ask about care, habitat, toxicity...'
+                              : 'Upload an image to start chatting'
+                          }
                           disabled={!plantInfo || isTyping}
                           className="flex-1 border-gray-200 focus:border-green-400 focus:ring-green-400 rounded-xl h-12"
                         />
                       </motion.div>
-                      <motion.div
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                      >
+                      <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                         <Button
                           onClick={handleSendMessage}
                           disabled={!plantInfo || !inputMessage.trim() || isTyping}
                           className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-xl px-6 h-12 shadow-md hover:shadow-lg transition-all"
                         >
-                          <motion.div
-                            animate={isTyping ? { rotate: 360 } : {}}
-                            transition={{ duration: 0.5 }}
-                          >
+                          <motion.div animate={isTyping ? { rotate: 360 } : {}} transition={{ duration: 0.5 }}>
                             <Send className="w-5 h-5" />
                           </motion.div>
                         </Button>
@@ -717,6 +800,7 @@ export function PlantIdentifier() {
                   </motion.div>
                 </Card>
               </motion.div>
+
             </div>
           </div>
         </div>
