@@ -71,9 +71,6 @@ git clone https://github.com/Muhozgu/chlorobiota.git
 Go to the project folder:
 
 ```bash
-cd chlorobiota/backend
-```
-```bash
 cd chlorobiota/frontend
 ```
 
@@ -94,6 +91,11 @@ npm run dev
 ```
 
 Run the backend:
+
+```bash
+cd chlorobiota/backend
+```
+
 ```bash
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
