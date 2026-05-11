@@ -65,13 +65,16 @@ Built to support researchers with fast classification, structured data outputs, 
 Clone the repository:
 
 ```bash
-git clone https://github.com/username/project-name.git
+git clone https://github.com/Muhozgu/chlorobiota.git
 ```
 
 Go to the project folder:
 
 ```bash
-cd project-name
+cd chlorobiota/backend
+```
+```bash
+cd chlorobiota/forntend
 ```
 
 Install dependencies:
@@ -86,6 +89,14 @@ Start the development server:
 npm start
 ```
 
+```bash
+npm run dev
+```
+
+Run the backend:
+```bash
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
 ---
 
 ## 📖 Usage
@@ -93,27 +104,40 @@ npm start
 Example:
 
 1. Sign up or log in
-2. Create a new task
-3. Track progress in the dashboard
-
-API Example:
-
-```bash
-GET /api/tasks
-```
+2. Create navigate to the loggin page
+3. Upload an plant image that you would like to identifier
+4. Navigate to the research assistant interface
+5. Start asking any plant related question based on your goals
 
 ---
 
 ## 📂 Project Structure
 
 ```bash
-project-name/
+CHLOROBIOTA
 │
-├── src/
-├── public/
-├── server/
-├── package.json
-└── README.md
+├── backend/
+│   ├── __pycache__/
+│   ├── .venv/
+│   ├── venv/
+│   ├── .env
+│   ├── .gitignore
+│   ├── main.py
+│   └── requirements.txt
+│
+├── frontend/
+│   ├── node_modules/
+│   ├── src/
+│   ├── .env
+│   ├── ATTRIBUTIONS.md
+│   ├── default_theme.css
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── pnpm-workspace.yaml
+│   ├── postcss.config.mjs
+│   ├── README.md
+│   └── vite.config.ts
 ```
 
 ---
@@ -123,9 +147,8 @@ project-name/
 Create a `.env` file in the root directory:
 
 ```env
-PORT=5000
-MONGO_URI=your_mongodb_uri
-JWT_SECRET=your_secret_key
+PORT=8000
+GROQ-API-KEY=your_qroq_api_key
 ```
 
 ---
