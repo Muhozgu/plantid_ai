@@ -27,14 +27,12 @@ Built to support researchers with fast classification, structured data outputs, 
 - React
 - Tailwind CSS
 - Typescript
-- 
 
 ### Backend
 - Node.js
 - Next.js
 - Python
 - Fast API
-- 
 
 ### Database
 - Postgresql
