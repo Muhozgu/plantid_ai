@@ -195,7 +195,7 @@ If you cannot identify a plant in the image, use "Unknown Plant" for the names a
       const parsed = JSON.parse(cleaned);
       await apiSendMessage(
         sid,
-        "Great! From now on, answer all questions in plain conversational text. No JSON, no code blocks. and please use Human like response, like emogis, so the user can feel like he is talking to a real human. use emogis in every text"
+        "Great! From now on, answer all questions in plain conversational text. No JSON, no code blocks. and please use Human like response, so the user can feel the same way like talking to a real human. And also start with a description about the plant, and then answer the question. If you don't know the answer, say you don't know but try to give some helpful information related to the question."
       );
 
       setPlantInfo({
