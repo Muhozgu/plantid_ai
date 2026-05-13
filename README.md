@@ -190,10 +190,12 @@ This project is licensed under the MIT License.
 
 ## 👨‍💻 Author
 
-Your Name
+Guy Muhoza
 
 - GitHub: https://github.com/Muhozgu
 - LinkedIn: https://linkedin.com/in/muhozgu
+- Kaggle: https://www.kaggle.com/muhozaguybrillant
+- Twitter: https://x.com/itworld49431
 
 ---
 
