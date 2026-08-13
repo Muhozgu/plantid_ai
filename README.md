@@ -1,4 +1,4 @@
-# Plant Identification & Research Assistant System
+# Chlorobiota - Plant Identification & Research Assistant System
 
 > An AI system that identifies plants by scientific, local, and family names using image inputs. Includes a research assistant chat interface where users can ask questions about taxonomy, plant traits and more.
 
